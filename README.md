@@ -1,6 +1,8 @@
-# Trello Board - React Native
+# Kanban Board - React Native
 
 A small Trello-style board built with React Native, TypeScript, Firebase Authentication, and Cloud Firestore.
+
+**Public release:** [Download Kanban Board v1.0.0](https://github.com/shanidiwakar/KanbanBoard/releases/tag/v1.0.0) · [View the GitHub repository](https://github.com/shanidiwakar/KanbanBoard)
 
 ## Features
 
