@@ -1,97 +1,152 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# Trello Board - React Native
 
-# Getting Started
+A small Trello-style board built with React Native, TypeScript, Firebase Authentication, and Cloud Firestore.
 
-> **Note**: Make sure you have completed the [Set Up Your Environment](https://reactnative.dev/docs/set-up-your-environment) guide before proceeding.
+## Features
 
-## Step 1: Start Metro
+- Email/password authentication.
+- Realtime board updates through a Firestore listener.
+- Create, edit, delete, and drag cards between columns.
+- Drag overlay outside the horizontal scroll view, with edge auto-scroll.
+- Optimistic local updates with offline persistence.
+- Queued `CREATE_CARD`, `UPDATE_CARD`, `DELETE_CARD`, and `MOVE_CARD` mutations.
+- Automatic retry for transient Firestore failures.
 
-First, you will need to run **Metro**, the JavaScript build tool for React Native.
+## Architecture
 
-To start the Metro dev server, run the following command from the root of your React Native project:
-
-```sh
-# Using npm
-npm start
-
-# OR using Yarn
-yarn start
+```text
+src/
+  components/board/       Card, column, and drag interaction UI
+  navigation/             Auth and authenticated navigation
+  screens/                Login and board screens
+  services/               Firebase, cache, queue, and sync services
+  store/                  BoardContext and boardReducer
+  types/                  Board, auth, and sync contracts
+  utils/                  Shared ordering and error helpers
 ```
 
-## Step 2: Build and run your app
+`BoardContext` owns board state and commands. `boardReducer` applies optimistic changes. `boardCache.service.ts` persists cards locally, `mutationQueue.service.ts` persists pending work, `syncManager.service.ts` processes the queue, and `board.service.ts` is the Firestore boundary.
 
-With Metro running, open a new terminal window/pane from the root of your React Native project, and use one of the following commands to build and run your Android or iOS app:
+## Installation
 
-### Android
+Requirements:
+
+- Node.js 22 or newer.
+- Android Studio and an Android emulator/device, or Xcode and an iOS simulator/device.
+- Ruby and CocoaPods for iOS.
 
 ```sh
-# Using npm
-npm run android
-
-# OR using Yarn
-yarn android
+npm install
 ```
 
-### iOS
-
-For iOS, remember to install CocoaPods dependencies (this only needs to be run on first clone or after updating native deps).
-
-The first time you create a new project, run the Ruby bundler to install CocoaPods itself:
+For iOS:
 
 ```sh
 bundle install
+bundle exec pod install --project-directory=ios
 ```
 
-Then, and every time you update your native dependencies, run:
+## Firebase Setup
+
+Android is configured by `android/app/google-services.json`. For iOS, add the matching `GoogleService-Info.plist` to the iOS app target.
+
+1. Create or select the Firebase project.
+2. Enable Email/Password Authentication.
+3. Create a Cloud Firestore database.
+4. Register the Android and iOS apps with their native identifiers.
+5. Deploy the rules from this repository:
 
 ```sh
-bundle exec pod install
+npx firebase-tools login
+npx firebase-tools deploy --only firestore:rules --project kanbanapp-2919f
 ```
 
-For more information, please visit [CocoaPods Getting Started guide](https://guides.cocoapods.org/using/getting-started.html).
+The checked-in rules allow authenticated access to `boards/demo-board` and its `cards` subcollection. Tighten these rules before using a multi-board production model.
+
+## Running Android/iOS
+
+Start Metro:
 
 ```sh
-# Using npm
+npm start
+```
+
+Run Android:
+
+```sh
+npm run android
+```
+
+Run iOS:
+
+```sh
 npm run ios
-
-# OR using Yarn
-yarn ios
 ```
 
-If everything is set up correctly, you should see your new app running in the Android Emulator, iOS Simulator, or your connected device.
+Reset Metro's cache when needed:
 
-This is one way to run your app — you can also build it directly from Android Studio or Xcode.
+```sh
+npx react-native start --reset-cache
+```
 
-## Step 3: Modify your app
+## Offline Architecture
 
-Now that you have successfully run the app, let's make changes!
+The board is hydrated from AsyncStorage before the Firestore listener is applied:
 
-Open `App.tsx` in your text editor of choice and make some changes. When you save, your app will automatically update and reflect these changes — this is powered by [Fast Refresh](https://reactnative.dev/docs/fast-refresh).
+1. Cached cards are loaded from `boardCache.service.ts`.
+2. Pending mutations are loaded from `mutationQueue.service.ts`.
+3. User actions update the UI immediately and write to the local cache.
+4. Mutations remain queued until an authenticated connection is available.
+5. `useNetworkStatus` triggers queue processing when connectivity returns.
 
-When you want to forcefully reload, for example to reset the state of your app, you can perform a full reload:
+Transient Firestore errors retry up to three times with backoff. Permanent failures, such as permission errors, stay in the queue with their status, attempt count, and error message so they are not silently lost.
 
-- **Android**: Press the <kbd>R</kbd> key twice or select **"Reload"** from the **Dev Menu**, accessed via <kbd>Ctrl</kbd> + <kbd>M</kbd> (Windows/Linux) or <kbd>Cmd ⌘</kbd> + <kbd>M</kbd> (macOS).
-- **iOS**: Press <kbd>R</kbd> in iOS Simulator.
+## Realtime Synchronization
 
-## Congratulations! :tada:
+`subscribeToBoardCards` listens to `boards/demo-board/cards`. Remote snapshots replace the local board only when there are no pending local mutations. This prevents an older snapshot from overwriting an optimistic local change while the queue is being processed.
 
-You've successfully run and modified your React Native App. :partying_face:
+## Conflict Strategy
 
-### Now what?
+The current strategy is intentionally simple:
 
-- If you want to add this new React Native code to an existing application, check out the [Integration guide](https://reactnative.dev/docs/integration-with-existing-apps).
-- If you're curious to learn more about React Native, check out the [docs](https://reactnative.dev/docs/getting-started).
+- Local actions are optimistic.
+- Mutations are processed in queue order.
+- Card moves use the current card state and calculated order values.
+- Remote snapshots are deferred while pending local mutations exist.
+- Firestore's last successful write wins when multiple clients update the same card.
 
-# Troubleshooting
+This works for a small single-board app, but it is not a full collaborative editing protocol. A production version should add server timestamps, revision checks, or an explicit conflict-resolution policy.
 
-If you're having issues getting the above steps to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
+## Drag-and-Drop Implementation
 
-# Learn More
+Cards use `react-native-gesture-handler` and report absolute pointer coordinates. The active card is rendered in a screen-level overlay, preventing clipping inside horizontally scrollable columns. The board screen measures card and column rectangles, highlights the current drop column, calculates insertion indexes from card midpoints, and auto-scrolls when the pointer enters an edge zone.
 
-To learn more about React Native, take a look at the following resources:
+## Trade-offs
 
-- [React Native Website](https://reactnative.dev) - learn more about React Native.
-- [Getting Started](https://reactnative.dev/docs/environment-setup) - an **overview** of React Native and how setup your environment.
-- [Learn the Basics](https://reactnative.dev/docs/getting-started) - a **guided tour** of the React Native **basics**.
-- [Blog](https://reactnative.dev/blog) - read the latest official React Native **Blog** posts.
-- [`@facebook/react-native`](https://github.com/facebook/react-native) - the Open Source; GitHub **repository** for React Native.
+- AsyncStorage keeps the implementation small, but it is not a transactional database.
+- The demo uses one fixed board ID instead of a board membership model.
+- Failed mutations are retained for diagnosis rather than silently discarded.
+- The current UI supports basic title and description editing, not rich text or attachments.
+- The Firestore rules are suitable for the demo board, not unrestricted multi-tenant data.
+
+## Testing
+
+Available commands:
+
+```sh
+npm test
+npm run lint
+npx tsc --noEmit
+```
+
+Focused lint checks for the board, queue, and sync code pass. The project still has existing React Native native-ref typing issues, and the starter Jest configuration may require a transform adjustment for ESM dependencies such as `react-native-gesture-handler`.
+
+## Future Improvements
+
+- Add board creation, membership, and per-user Firestore security rules.
+- Add a visible failed-mutation retry action and queue diagnostics.
+- Add automated reducer, queue, sync, and drag behavior tests.
+- Replace AsyncStorage queue updates with a transactional local database.
+- Use server timestamps and revision-based conflict detection.
+- Add labels, due dates, comments, attachments, and search.
+- Improve accessibility and keyboard/desktop interaction support.
